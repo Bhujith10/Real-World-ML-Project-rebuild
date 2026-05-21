@@ -1,0 +1,128 @@
+# Kafka deployment using the official Apache Kafka image in KRaft mode (no ZooKeeper).
+#
+# Resources created:
+# 1. Namespace "kafka" — keeps Kafka resources isolated
+# 2. ConfigMap — Kafka broker configuration
+# 3. Service (headless) — gives the StatefulSet pod a stable DNS name
+# 4. Service (NodePort) — exposes Kafka to the host via NodePort (for our trades service)
+# 5. StatefulSet — runs the Kafka broker with persistent identity
+#
+# KRaft mode: Kafka 3.3+ can run without ZooKeeper using its own consensus protocol (KRaft).
+# We configure a single node that acts as both controller and broker.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kafka
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-config
+  namespace: kafka
+data:
+  # KAFKA_NODE_ID: unique ID for this broker in the cluster
+  # KAFKA_PROCESS_ROLES: this node is both a "broker" (serves clients) and "controller" (manages metadata)
+  # KAFKA_ADVERTISED_LISTENERS: the address clients use to connect to this broker
+  #   The official image auto-derives KAFKA_LISTENERS from this (replaces host with 0.0.0.0)
+  # KAFKA_CONTROLLER_QUORUM_VOTERS: list of controller nodes (just us: node 1)
+  # KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: set to 1 because we only have 1 broker
+  KAFKA_NODE_ID: "1"
+  KAFKA_PROCESS_ROLES: "broker,controller"
+  KAFKA_LISTENERS: "PLAINTEXT://kafka-0.kafka-headless.kafka.svc.cluster.local:9092,CONTROLLER://kafka-0.kafka-headless.kafka.svc.cluster.local:9093"
+  KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka-0.kafka-headless.kafka.svc.cluster.local:9092"
+  KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+  KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-0.kafka-headless.kafka.svc.cluster.local:9093"
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+  CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+
+---
+# Headless Service: gives each pod a stable DNS name like kafka-0.kafka-headless.kafka.svc.cluster.local
+# "Headless" means clusterIP: None — no load balancing, DNS resolves directly to pod IPs
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  namespace: kafka
+spec:
+  clusterIP: None
+  selector:
+    app: kafka
+  ports:
+    - name: broker
+      port: 9092
+      targetPort: 9092
+    - name: controller
+      port: 9093
+      targetPort: 9093
+
+---
+# ClusterIP Service: other pods in the cluster use "kafka.kafka.svc.cluster.local:9092" to reach Kafka
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: kafka
+spec:
+  selector:
+    app: kafka
+  ports:
+    - name: broker
+      port: 9092
+      targetPort: 9092
+
+---
+# StatefulSet: like a Deployment, but pods get stable names (kafka-0, kafka-1, ...) and stable storage.
+# Kafka needs this because brokers have identity — they store data and other brokers reference them by name.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: kafka
+spec:
+  serviceName: kafka-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: apache/kafka:3.9.0
+          # imagePullPolicy: Never means "use the image already loaded into the node, don't try Docker Hub"
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 9092
+              name: broker
+            - containerPort: 9093
+              name: controller
+          envFrom:
+            - configMapRef:
+                name: kafka-config
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 60
+            periodSeconds: 20

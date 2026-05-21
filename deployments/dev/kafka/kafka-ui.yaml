@@ -1,0 +1,60 @@
+# Kafka UI — a web interface for browsing Kafka topics, messages, and consumer groups.
+#
+# We expose it via a NodePort service on port 30182, which maps to localhost:8182
+# through our kind cluster's extraPortMappings.
+#
+# Chain: localhost:8182 → kind container:30182 → NodePort Service → kafka-ui pod:8080
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-ui
+  namespace: kafka
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-ui
+  template:
+    metadata:
+      labels:
+        app: kafka-ui
+    spec:
+      containers:
+        - name: kafka-ui
+          image: provectuslabs/kafka-ui:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            # Tell Kafka UI where to find our Kafka broker
+            - name: KAFKA_CLUSTERS_0_NAME
+              value: "crypto-mvp"
+            - name: KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS
+              value: "kafka-0.kafka-headless.kafka.svc.cluster.local:9092"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "300m"
+
+---
+# NodePort Service: exposes Kafka UI on port 30182 on the K8s node.
+# Combined with kind's extraPortMappings (hostPort 8182 → containerPort 30182),
+# this makes Kafka UI accessible at http://localhost:8182
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-ui
+  namespace: kafka
+spec:
+  type: NodePort
+  selector:
+    app: kafka-ui
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30182

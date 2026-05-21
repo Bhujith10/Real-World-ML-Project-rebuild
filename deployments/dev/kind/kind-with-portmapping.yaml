@@ -1,0 +1,30 @@
+# kind cluster configuration with port mappings
+# These ports allow us to access services running inside the cluster from localhost
+#
+# How it works:
+# - kind runs K8s nodes as Docker containers
+# - extraPortMappings forward ports from your host (localhost) → into the container
+# - Inside the container, K8s NodePort services expose apps on those same ports
+# - Result: localhost:PORT → Docker container → K8s NodePort → your pod
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # Kafka UI — we'll access it at http://localhost:8182
+      - containerPort: 30182
+        hostPort: 8182
+        protocol: TCP
+      # Grafana (for later sessions) — http://localhost:3000
+      - containerPort: 30300
+        hostPort: 3000
+        protocol: TCP
+      # MLflow UI (for later sessions) — http://localhost:5000
+      - containerPort: 30500
+        hostPort: 5000
+        protocol: TCP
+      # RisingWave psql (for later sessions) — localhost:4566
+      - containerPort: 30456
+        hostPort: 4566
+        protocol: TCP
