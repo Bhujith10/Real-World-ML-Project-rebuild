@@ -30,10 +30,16 @@ test: ## Run all tests
 build-trades: ## Build trades Docker image and load into kind
 	bash scripts/build-and-push-image.sh trades
 
+build-candles: ## Build candles Docker image and load into kind
+	bash scripts/build-and-push-image.sh candles
+
 # --- Deployment ---
 
 deploy-trades: ## Deploy trades service to kind cluster
 	bash scripts/deploy.sh trades
+
+deploy-candles: ## Deploy candles service to kind cluster
+	bash scripts/deploy.sh candles
 
 # --- Infrastructure ---
 

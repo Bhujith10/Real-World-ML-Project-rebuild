@@ -26,7 +26,7 @@ if [ ! -d "$DEPLOY_DIR" ]; then
 fi
 
 echo "📦 Applying manifests from $DEPLOY_DIR..."
-kubectl apply -f "$DEPLOY_DIR/"
+kubectl apply -f "$DEPLOY_DIR/deployment.yaml"
 
 echo ""
 echo "🔄 Restarting deployment '$SERVICE_NAME'..."

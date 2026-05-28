@@ -34,6 +34,11 @@ Format:
 - 📝 Notes: Used `dependency-groups.dev` instead of deprecated `tool.uv.dev-dependencies`. Multi-document YAML needs `--allow-multiple-documents` flag in check-yaml hook. `pre-commit run --all-files` passes cleanly.
 - ⏭️ Next: Session 3 — Candles service (Kafka consumer → 1-min OHLCV windowing with Quixstreams)
 
+## 2026-05-28 — Session 3: Candles service (OHLCV windowing)
+- ✅ Done: candles service consuming from `trades` topic, windowing into 1-min OHLCV candles using Quixstreams (tumbling window + First/Last/Min/Max/Sum aggregators), producing to `candles` topic. Deployed to kind cluster and verified live candle output in logs.
+- 📝 Notes: Quixstreams auto-creates topics (`candles`, changelog topic for state). Uses event-time windowing via custom timestamp_extractor. `.final()` emits only after window closes. `auto_offset_reset="earliest"` replays all historical trades on first start.
+- ⏭️ Next: Session 4 — Technical indicators service (RSI/MACD/EMA from candles → RisingWave feature store)
+
 ---
 
 <!-- Add new entries above this line -->

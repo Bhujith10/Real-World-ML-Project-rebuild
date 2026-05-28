@@ -54,13 +54,19 @@ jobs:
         run: |
           docker build -t trades:dev -f services/trades/Dockerfile services/trades/
 
-      - name: Verify image size
+      - name: Build candles Docker image
         run: |
-          SIZE=$(docker image inspect trades:dev --format='{{.Size}}')
-          SIZE_MB=$((SIZE / 1024 / 1024))
-          echo "Image size: ${SIZE_MB} MB"
-          if [ "$SIZE_MB" -gt 300 ]; then
-            echo "⚠️  Image exceeds 300MB target"
-            exit 1
-          fi
-          echo "✅ Image size is within target (<300MB)"
+          docker build -t candles:dev -f services/candles/Dockerfile services/candles/
+
+      - name: Verify image sizes
+        run: |
+          for service in trades candles; do
+            SIZE=$(docker image inspect ${service}:dev --format='{{.Size}}')
+            SIZE_MB=$((SIZE / 1024 / 1024))
+            echo "${service} image size: ${SIZE_MB} MB"
+            if [ "$SIZE_MB" -gt 300 ]; then
+              echo "⚠️  ${service} image exceeds 300MB target"
+              exit 1
+            fi
+          done
+          echo "✅ All images within target (<300MB)"
