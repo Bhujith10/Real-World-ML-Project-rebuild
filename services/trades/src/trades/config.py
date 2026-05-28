@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     kafka_topic: str = "trades"
     kraken_ws_url: str = "wss://ws.kraken.com/v2"
     pairs: str = "BTC/USD"
+    log_format: str = "text"  # "text" for dev, "json" for production
 
     class Config:
         env_prefix = ""  # No prefix — use var names directly

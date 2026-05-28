@@ -1,0 +1,46 @@
+# Root pyproject.toml — defines the uv workspace (monorepo).
+#
+# This tells uv: "this repo contains multiple Python projects under services/".
+# Running `uv sync` from the root sets up all services.
+# Each service still has its own pyproject.toml with its own dependencies.
+
+[project]
+name = "crypto-mvp"
+version = "0.1.0"
+description = "Real-time crypto price prediction system"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv.workspace]
+members = ["services/*"]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0",
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (import sorting)
+    "UP",   # pyupgrade (modern Python syntax)
+    "B",    # flake8-bugbear (common bugs)
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["trades", "candles", "technical_indicators", "predictor"]
+
+[tool.pytest.ini_options]
+testpaths = ["services"]

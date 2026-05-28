@@ -29,6 +29,11 @@ Format:
 - 📝 Notes: Bitnami images removed from Docker Hub (2025 deprecation) — switched to official apache/kafka image with plain K8s manifests instead of Helm. Used `docker save | ctr import` to load images into kind (workaround for containerd image store compatibility). Added `/etc/hosts` entry for `kafka-0.kafka-headless.kafka.svc.cluster.local` → 127.0.0.1 for local dev.
 - ⏭️ Next: Session 2 — Containerize properly (multi-stage Dockerfile, K8s manifests, CI/CD, pre-commit, structured logging)
 
+## 2026-05-28 — Session 2: Containerize + deploy + tooling
+- ✅ Done: pre-commit + ruff (lint/format on every commit), uv workspaces (monorepo), structured JSON logging with loguru, .dockerignore, Makefile, build/deploy scripts, kustomize overlay, GitHub Actions CI pipeline.
+- 📝 Notes: Used `dependency-groups.dev` instead of deprecated `tool.uv.dev-dependencies`. Multi-document YAML needs `--allow-multiple-documents` flag in check-yaml hook. `pre-commit run --all-files` passes cleanly.
+- ⏭️ Next: Session 3 — Candles service (Kafka consumer → 1-min OHLCV windowing with Quixstreams)
+
 ---
 
 <!-- Add new entries above this line -->

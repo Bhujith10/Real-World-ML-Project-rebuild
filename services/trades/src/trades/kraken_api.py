@@ -12,7 +12,7 @@ The function is an async generator — it yields Trade objects one at a time.
 
 import json
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
+from datetime import datetime
 
 import websockets
 

@@ -16,11 +16,12 @@ from loguru import logger
 from trades.config import settings
 from trades.kafka_producer import create_producer, produce_trade
 from trades.kraken_api import stream_trades
+from trades.logging import setup_logging
 
 
 async def run() -> None:
     """Main async loop: stream trades from Kraken and produce to Kafka."""
-    logger.info(f"Starting trades service")
+    logger.info("Starting trades service")
     logger.info(f"  Kafka broker: {settings.kafka_broker_address}")
     logger.info(f"  Kafka topic:  {settings.kafka_topic}")
     logger.info(f"  Pairs:        {settings.pairs}")
@@ -49,6 +50,7 @@ async def run() -> None:
 
 def main() -> None:
     """Sync entry point that runs the async loop."""
+    setup_logging()
     asyncio.run(run())
 
 

@@ -1,0 +1,26 @@
+# Pre-commit hooks run automatically on every `git commit`.
+# They catch issues BEFORE code enters the repo — like a quality gate.
+#
+# Install: pre-commit install
+# Manual run: pre-commit run --all-files
+
+repos:
+  # Ruff — extremely fast Python linter + formatter (replaces flake8, black, isort)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # General file hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ['--allow-multiple-documents']
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict

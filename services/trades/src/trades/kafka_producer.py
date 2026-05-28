@@ -35,9 +35,7 @@ def create_producer() -> KafkaProducer:
         acks="all",
         retries=3,
     )
-    logger.info(
-        f"Kafka producer connected to {settings.kafka_broker_address}"
-    )
+    logger.info(f"Kafka producer connected to {settings.kafka_broker_address}")
     return producer
 
 

@@ -1,0 +1,13 @@
+# Ignore everything that's not needed to build the Docker image.
+# This makes builds faster and images smaller.
+
+.venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.ruff_cache/
+.pytest_cache/
+tests/
+*.md
+.env*
