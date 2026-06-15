@@ -58,10 +58,13 @@ jobs:
         run: |
           docker build -t candles:dev -f services/candles/Dockerfile services/candles/
 
+      - name: Build predictor Docker image
+        run: |
+          docker build -t predictor:dev -f services/predictor/Dockerfile services/predictor/
 
       - name: Verify image sizes
         run: |
-          for service in trades candles; do
+          for service in trades candles predictor; do
             SIZE=$(docker image inspect ${service}:dev --format='{{.Size}}')
             SIZE_MB=$((SIZE / 1024 / 1024))
             echo "${service} image size: ${SIZE_MB} MB"

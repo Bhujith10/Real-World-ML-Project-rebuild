@@ -1,0 +1,44 @@
+# Predictor service deployment.
+#
+# Consumes features from Kafka, makes predictions using a model loaded
+# from MLflow, and produces predictions to the predictions topic.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: predictor
+  labels:
+    app: predictor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: predictor
+  template:
+    metadata:
+      labels:
+        app: predictor
+    spec:
+      containers:
+        - name: predictor
+          image: predictor:dev
+          imagePullPolicy: Never
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+          env:
+            - name: KAFKA_BROKER_ADDRESS
+              value: "kafka-0.kafka-headless.kafka.svc.cluster.local:9092"
+            - name: KAFKA_INPUT_TOPIC
+              value: "features"
+            - name: KAFKA_OUTPUT_TOPIC
+              value: "predictions"
+            - name: KAFKA_CONSUMER_GROUP
+              value: "predictor-service"
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow.mlflow.svc.cluster.local:5000"
+            - name: MLFLOW_MODEL_NAME
+              value: "crypto-price-predictor"
+            - name: LOG_FORMAT
+              value: "text"

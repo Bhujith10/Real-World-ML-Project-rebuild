@@ -1,0 +1,104 @@
+# MLflow Tracking Server deployment.
+#
+# Runs MLflow in a single pod with SQLite backend and local artifact storage.
+# For production, you'd use Postgres + S3/MinIO — this is fine for dev.
+#
+# Accessible at http://localhost:5000 via NodePort 30500.
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mlflow
+
+---
+# PersistentVolumeClaim — keeps MLflow data across pod restarts
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlflow-data
+  namespace: mlflow
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: mlflow
+  labels:
+    app: mlflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow
+  template:
+    metadata:
+      labels:
+        app: mlflow
+    spec:
+      containers:
+        - name: mlflow
+          image: ghcr.io/mlflow/mlflow:v2.21.3
+          args:
+            - mlflow
+            - server
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "5000"
+            - "--workers"
+            - "1"
+            - "--backend-store-uri"
+            - "sqlite:///mlflow-data/mlflow.db"
+            - "--default-artifact-root"
+            - "/mlflow-data/artifacts"
+          ports:
+            - containerPort: 5000
+              name: http
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          readinessProbe:
+            tcpSocket:
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /mlflow-data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mlflow-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: mlflow
+spec:
+  type: NodePort
+  selector:
+    app: mlflow
+  ports:
+    - port: 5000
+      targetPort: 5000
+      nodePort: 30500
+      name: http

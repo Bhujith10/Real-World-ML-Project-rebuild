@@ -39,10 +39,15 @@ Format:
 - 📝 Notes: Quixstreams auto-creates topics (`candles`, changelog topic for state). Uses event-time windowing via custom timestamp_extractor. `.final()` emits only after window closes. `auto_offset_reset="earliest"` replays all historical trades on first start.
 - ⏭️ Next: Session 4 — Technical indicators service (RSI/MACD/EMA from candles → RisingWave feature store)
 
-## 2026-06-15 — Session 4: RisingWave feature store + technical indicators
-- ✅ Done: RisingWave deployed to kind cluster (standalone single_node mode with custom TOML config for compactor memory tuning). Materialized views created: Kafka source table on `candles` topic, `mv_ema` (EMA-14), `mv_rsi` (RSI-14), `mv_macd` (MACD 12/26/9), `mv_features` (combined), and Kafka sink to `features` topic. Python `technical_indicators` service built and deployed — computes EMA/RSI/MACD via Quixstreams as an alternative to the SQL views. Both paths verified with live data flowing.
-- 📝 Notes: RisingWave v2.3.0 hits compactor memory assertion (`compactor_memory_limit_bytes > min_compactor_memory_limit_bytes * 2`) with default config — fixed by mounting a custom `risingwave.toml` setting `compactor_memory_limit_mb = 1024` and `compactor_max_sst_size = 134217728`. Docker Desktop on WSL2 had extremely slow networking inside build containers — fixed by adding `"dns": ["8.8.8.8", "8.8.4.4"]` to Docker Engine config. Switched `technical_indicators` Dockerfile from `uv sync` to `pip install` due to `uv` download issues in Docker. All three service Dockerfiles updated with `UV_LINK_MODE=copy`, `UV_HTTP_TIMEOUT=120`, and `--mount=type=cache` for future builds.
+## 2026-06-15 — Session 4: RisingWave feature store
+- ✅ Done: RisingWave deployed to kind cluster (standalone single_node mode with custom TOML config for compactor memory tuning). Materialized views created: Kafka source table on `candles` topic, `mv_ema` (EMA-14), `mv_rsi` (RSI-14), `mv_macd` (MACD 12/26/9), `mv_features` (combined), and Kafka sink to `features` topic. RisingWave handles all feature computation via streaming SQL — no separate Python service needed.
+- 📝 Notes: RisingWave v2.3.0 hits compactor memory assertion with default config — fixed by mounting a custom `risingwave.toml` with `compactor_memory_limit_mb = 1024` and `compactor_max_sst_size = 134217728`. Docker Desktop on WSL2 had slow networking — fixed by adding `"dns": ["8.8.8.8", "8.8.4.4"]` to Docker Engine config.
 - ⏭️ Next: Session 5 — Predictor service (XGBoost + MLflow train/inference)
+
+## 2026-06-15 — Session 5: Predictor service (XGBoost + MLflow)
+- ✅ Done: MLflow tracking server deployed to kind cluster (ghcr.io/mlflow/mlflow:v2.21.3, SQLite backend, local artifact storage, NodePort at localhost:5000). Predictor service created with: `train.py` (XGBoost training + MLflow logging/registry), `predict.py` (Quixstreams consumer on `features` topic → model inference → `predictions` topic), `feature_loader.py` (query RisingWave or read Parquet for training data). Service runs in pass-through mode when no model is registered (echoes current price as prediction). Deployed and verified with live predictions flowing.
+- 📝 Notes: MLflow v2.21.3 OOM-killed with default 4 gunicorn workers at 512Mi — fixed with `--workers 1` and 1Gi memory limit. MLflow import is heavy (~30s startup). Model loading uses `MlflowClient.search_model_versions()` first to avoid hanging when no model exists. Predictor Dockerfile uses `pip install .` (same pattern as other services).
+- ⏭️ Next: Session 6 — Dashboard (Grafana) + CI/CD polish
 
 ---
 
