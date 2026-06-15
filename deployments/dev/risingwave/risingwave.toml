@@ -1,0 +1,9 @@
+[storage]
+# Override compactor memory to avoid the assertion:
+# compactor_memory_limit_bytes > min_compactor_memory_limit_bytes * 2
+# min_compactor_memory_limit = sstable_size + block_size = ~268MB
+# So we need > 536MB. Setting 1024MB to be safe.
+compactor_memory_limit_mb = 1024
+
+# Reduce sstable size to lower the minimum threshold
+compactor_max_sst_size = 134217728

@@ -12,14 +12,18 @@ FROM python:3.13-slim AS builder
 # Install uv for fast dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+ENV UV_LINK_MODE=copy \
+    UV_HTTP_TIMEOUT=120
+
 WORKDIR /app
 
 # Copy dependency files first (better Docker layer caching)
 COPY pyproject.toml uv.lock* ./
 COPY src/ src/
 
-# Install dependencies into the system Python (no venv needed in container)
-RUN uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
+# Install dependencies (cache mount persists downloads across builds)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
 
 # --- Runtime stage ---
 FROM python:3.13-slim

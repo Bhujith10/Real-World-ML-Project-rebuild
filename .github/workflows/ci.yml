@@ -58,9 +58,13 @@ jobs:
         run: |
           docker build -t candles:dev -f services/candles/Dockerfile services/candles/
 
+      - name: Build technical-indicators Docker image
+        run: |
+          docker build -t technical-indicators:dev -f services/technical_indicators/Dockerfile services/technical_indicators/
+
       - name: Verify image sizes
         run: |
-          for service in trades candles; do
+          for service in trades candles technical-indicators; do
             SIZE=$(docker image inspect ${service}:dev --format='{{.Size}}')
             SIZE_MB=$((SIZE / 1024 / 1024))
             echo "${service} image size: ${SIZE_MB} MB"

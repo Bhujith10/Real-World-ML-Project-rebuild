@@ -1,0 +1,45 @@
+annotated-types==0.7.0
+anyio==4.13.0
+attrs==26.1.0
+authlib==1.7.2
+avro==1.12.1
+cachetools==7.1.4
+certifi==2026.5.20
+cffi==2.0.0 ; platform_python_implementation != 'PyPy'
+charset-normalizer==3.4.7
+colorama==0.4.6 ; sys_platform == 'win32'
+confluent-kafka==2.11.1
+cryptography==48.0.0
+fastavro==1.12.2
+googleapis-common-protos==1.75.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.16
+joserfc==1.6.8
+jsonlines==4.0.0
+jsonpath-ng==1.8.0
+jsonschema-specifications==2025.9.1
+jsonschema==4.26.0
+loguru==0.7.3
+markdown-it-py==4.2.0
+mdurl==0.1.2
+orjson==3.11.9
+protobuf==7.35.0
+pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
+pydantic-core==2.41.5
+pydantic-settings==2.11.0
+pydantic==2.12.5
+pygments==2.20.0
+pyrsistent==0.20.0
+python-dotenv==1.2.2
+quixstreams==3.23.6
+referencing==0.37.0
+requests==2.34.2
+rich==14.3.4
+rocksdict==0.3.29
+rpds-py==0.30.0
+typing-extensions==4.15.0
+typing-inspection==0.4.2
+urllib3==2.7.0
+win32-setctime==1.2.0 ; sys_platform == 'win32'

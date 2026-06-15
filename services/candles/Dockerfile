@@ -7,12 +7,16 @@ FROM python:3.13-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+ENV UV_LINK_MODE=copy \
+    UV_HTTP_TIMEOUT=120
+
 WORKDIR /app
 
 # Install dependencies first (cached if pyproject.toml unchanged)
 COPY pyproject.toml uv.lock* ./
 COPY src/ src/
-RUN uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
 
 # --- Runtime stage ---
 FROM python:3.13-slim

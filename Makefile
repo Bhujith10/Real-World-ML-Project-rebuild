@@ -3,7 +3,7 @@
 # Usage: make <target>
 # Example: make build-trades, make deploy-trades, make lint
 
-.PHONY: help lint format test build-trades deploy-trades cluster kafka kafka-ui all-infra
+.PHONY: help lint format test build-trades build-candles build-ti deploy-trades deploy-candles deploy-ti cluster kafka kafka-ui risingwave risingwave-views all-infra
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -33,6 +33,9 @@ build-trades: ## Build trades Docker image and load into kind
 build-candles: ## Build candles Docker image and load into kind
 	bash scripts/build-and-push-image.sh candles
 
+build-ti: ## Build technical_indicators Docker image and load into kind
+	bash scripts/build-and-push-image.sh technical_indicators
+
 # --- Deployment ---
 
 deploy-trades: ## Deploy trades service to kind cluster
@@ -40,6 +43,9 @@ deploy-trades: ## Deploy trades service to kind cluster
 
 deploy-candles: ## Deploy candles service to kind cluster
 	bash scripts/deploy.sh candles
+
+deploy-ti: ## Deploy technical_indicators service to kind cluster
+	bash scripts/deploy.sh technical_indicators
 
 # --- Infrastructure ---
 
@@ -52,7 +58,13 @@ kafka: ## Deploy Kafka to the cluster
 kafka-ui: ## Deploy Kafka UI to the cluster
 	bash deployments/dev/kafka/install_kafka_ui.sh
 
-all-infra: cluster kafka kafka-ui ## Create cluster + deploy all infrastructure
+risingwave: ## Deploy RisingWave to the cluster
+	bash deployments/dev/risingwave/install.sh
+
+risingwave-views: ## Apply materialized views to RisingWave
+	bash deployments/dev/risingwave/apply_views.sh
+
+all-infra: cluster kafka kafka-ui risingwave ## Create cluster + deploy all infrastructure
 
 # --- Pre-commit ---
 

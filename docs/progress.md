@@ -39,6 +39,11 @@ Format:
 - 📝 Notes: Quixstreams auto-creates topics (`candles`, changelog topic for state). Uses event-time windowing via custom timestamp_extractor. `.final()` emits only after window closes. `auto_offset_reset="earliest"` replays all historical trades on first start.
 - ⏭️ Next: Session 4 — Technical indicators service (RSI/MACD/EMA from candles → RisingWave feature store)
 
+## 2026-06-15 — Session 4: RisingWave feature store + technical indicators
+- ✅ Done: RisingWave deployed to kind cluster (standalone single_node mode with custom TOML config for compactor memory tuning). Materialized views created: Kafka source table on `candles` topic, `mv_ema` (EMA-14), `mv_rsi` (RSI-14), `mv_macd` (MACD 12/26/9), `mv_features` (combined), and Kafka sink to `features` topic. Python `technical_indicators` service built and deployed — computes EMA/RSI/MACD via Quixstreams as an alternative to the SQL views. Both paths verified with live data flowing.
+- 📝 Notes: RisingWave v2.3.0 hits compactor memory assertion (`compactor_memory_limit_bytes > min_compactor_memory_limit_bytes * 2`) with default config — fixed by mounting a custom `risingwave.toml` setting `compactor_memory_limit_mb = 1024` and `compactor_max_sst_size = 134217728`. Docker Desktop on WSL2 had extremely slow networking inside build containers — fixed by adding `"dns": ["8.8.8.8", "8.8.4.4"]` to Docker Engine config. Switched `technical_indicators` Dockerfile from `uv sync` to `pip install` due to `uv` download issues in Docker. All three service Dockerfiles updated with `UV_LINK_MODE=copy`, `UV_HTTP_TIMEOUT=120`, and `--mount=type=cache` for future builds.
+- ⏭️ Next: Session 5 — Predictor service (XGBoost + MLflow train/inference)
+
 ---
 
 <!-- Add new entries above this line -->

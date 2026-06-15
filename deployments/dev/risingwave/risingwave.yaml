@@ -1,0 +1,112 @@
+---
+# Namespace for RisingWave
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: risingwave
+---
+# Service — ClusterIP for internal access (psql on port 4566)
+apiVersion: v1
+kind: Service
+metadata:
+  name: risingwave
+  namespace: risingwave
+  labels:
+    app: risingwave
+spec:
+  type: ClusterIP
+  ports:
+    - name: sql
+      port: 4566
+      targetPort: 4566
+    - name: dashboard
+      port: 5691
+      targetPort: 5691
+  selector:
+    app: risingwave
+---
+# NodePort service — exposes psql port to localhost via kind port mapping
+apiVersion: v1
+kind: Service
+metadata:
+  name: risingwave-nodeport
+  namespace: risingwave
+  labels:
+    app: risingwave
+spec:
+  type: NodePort
+  ports:
+    - name: sql
+      port: 4566
+      targetPort: 4566
+      nodePort: 30456
+  selector:
+    app: risingwave
+---
+# ConfigMap for RisingWave TOML config (compactor memory tuning)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: risingwave-config
+  namespace: risingwave
+data:
+  risingwave.toml: |
+    [storage]
+    compactor_memory_limit_mb = 1024
+    compactor_max_sst_size = 134217728
+---
+# Deployment — RisingWave in standalone single_node mode
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risingwave
+  namespace: risingwave
+  labels:
+    app: risingwave
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: risingwave
+  template:
+    metadata:
+      labels:
+        app: risingwave
+    spec:
+      containers:
+        - name: risingwave
+          image: risingwavelabs/risingwave:v2.3.0
+          imagePullPolicy: IfNotPresent
+          args: ["single_node", "--config-path", "/risingwave/config/risingwave.toml"]
+          env:
+            - name: RW_TOTAL_MEMORY_BYTES
+              value: "8589934592"
+          ports:
+            - containerPort: 4566
+              name: sql
+            - containerPort: 5691
+              name: dashboard
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "250m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          readinessProbe:
+            tcpSocket:
+              port: 4566
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /risingwave/config
+          livenessProbe:
+            tcpSocket:
+              port: 4566
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: risingwave-config
