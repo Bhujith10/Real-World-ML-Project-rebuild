@@ -3,7 +3,7 @@
 # Usage: make <target>
 # Example: make build-trades, make deploy-trades, make lint
 
-.PHONY: help lint format test build-trades build-candles build-ti deploy-trades deploy-candles deploy-ti cluster kafka kafka-ui risingwave risingwave-views all-infra
+.PHONY: help lint format test build-trades build-candles deploy-trades deploy-candles cluster kafka kafka-ui risingwave risingwave-views all-infra
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -33,8 +33,6 @@ build-trades: ## Build trades Docker image and load into kind
 build-candles: ## Build candles Docker image and load into kind
 	bash scripts/build-and-push-image.sh candles
 
-build-ti: ## Build technical_indicators Docker image and load into kind
-	bash scripts/build-and-push-image.sh technical_indicators
 
 # --- Deployment ---
 
@@ -44,8 +42,6 @@ deploy-trades: ## Deploy trades service to kind cluster
 deploy-candles: ## Deploy candles service to kind cluster
 	bash scripts/deploy.sh candles
 
-deploy-ti: ## Deploy technical_indicators service to kind cluster
-	bash scripts/deploy.sh technical_indicators
 
 # --- Infrastructure ---
 
