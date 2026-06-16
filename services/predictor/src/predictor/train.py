@@ -3,13 +3,15 @@
 Full pipeline:
 1. Pull data from RisingWave → save as timestamped Parquet in data/raw/
 2. Build canonical dataset: concat all raw Parquets → dedup → sort
-3. Detect gaps in the data (timestamp jumps > threshold)
-4. Engineer targets (price 5 min ahead), respecting gap boundaries
-5. Time-based 80/20 split (no shuffle — critical for time series)
-6. Train XGBoost regressor
-7. Compare with previous model on the SAME test set
-8. Only register the new model if it beats the previous one (lower MAE)
-9. Log everything to MLflow
+3. Check if enough new rows since last training (skip if not)
+4. Detect gaps in the data (timestamp jumps > threshold)
+5. Engineer targets (price 5 min ahead), respecting gap boundaries
+6. Time-based 80/20 split (no shuffle — critical for time series)
+7. Train XGBoost regressor
+8. Compare with previous model on the SAME test set
+9. Only register the new model if it beats the previous one (lower MAE)
+10. Log everything to MLflow
+11. If a new model was registered, restart the predictor deployment
 
 Run locally:
   RISINGWAVE_HOST=localhost MLFLOW_TRACKING_URI=http://localhost:5000 \
@@ -17,6 +19,11 @@ Run locally:
 
 Requires RisingWave at port 4566 and MLflow at port 5000 (both via NodePort).
 """
+
+import json
+import subprocess
+from datetime import UTC
+from pathlib import Path
 
 import mlflow
 import numpy as np
@@ -42,6 +49,12 @@ TRAIN_RATIO = 0.8
 
 # Minimum rows required to attempt training
 MIN_ROWS = 50
+
+# Minimum NEW rows required since last training run to justify retraining
+MIN_NEW_ROWS = 100
+
+# Path to the metadata file tracking last training run
+TRAIN_INFO_FILE = Path(settings.data_dir) / "last_train_info.json"
 
 
 def engineer_targets(df: pl.DataFrame) -> pl.DataFrame:
@@ -88,6 +101,66 @@ def evaluate_model(
     logger.info(f"{label} MAE:  ${mae:.2f}")
     logger.info(f"{label} RMSE: ${rmse:.2f}")
     return {"mae": mae, "rmse": rmse}
+
+
+def load_train_info() -> dict | None:
+    """Load metadata from the last training run.
+
+    Returns dict with keys: row_count, timestamp, model_version
+    or None if no previous training info exists.
+    """
+    if not TRAIN_INFO_FILE.exists():
+        return None
+    try:
+        return json.loads(TRAIN_INFO_FILE.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"Could not read {TRAIN_INFO_FILE}: {e}")
+        return None
+
+
+def save_train_info(row_count: int, registered: bool) -> None:
+    """Save metadata about this training run."""
+    from datetime import datetime
+
+    info = {
+        "row_count": row_count,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "model_registered": registered,
+    }
+    TRAIN_INFO_FILE.parent.mkdir(parents=True, exist_ok=True)
+    TRAIN_INFO_FILE.write_text(json.dumps(info, indent=2))
+    logger.info(f"Saved training info to {TRAIN_INFO_FILE}")
+
+
+def restart_predictor() -> None:
+    """Restart the predictor deployment so it loads the new model.
+
+    Uses kubectl to do a rolling restart. Only works when running
+    inside the cluster (CronJob) with the predictor-trainer ServiceAccount.
+    When running locally, this is a no-op.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "kubectl",
+                "rollout",
+                "restart",
+                "deployment/predictor",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            logger.info("Predictor deployment restarted to load new model")
+        else:
+            logger.warning(
+                f"Could not restart predictor (rc={result.returncode}): " f"{result.stderr.strip()}"
+            )
+    except FileNotFoundError:
+        logger.info("kubectl not available — running locally, skip predictor restart")
+    except subprocess.TimeoutExpired:
+        logger.warning("kubectl rollout restart timed out")
 
 
 def load_previous_model() -> xgb.XGBRegressor | None:
@@ -151,15 +224,33 @@ def train() -> None:
     logger.info(f"Canonical dataset shape: {df.shape}")
 
     # ------------------------------------------------------------------
-    # Step 3: Detect gaps
+    # Step 3: Check if enough new rows since last training
     # ------------------------------------------------------------------
-    logger.info("Step 3: Detect gaps")
+    logger.info("Step 3: Check for new data")
+    prev_info = load_train_info()
+    if prev_info is not None:
+        prev_rows = prev_info.get("row_count", 0)
+        new_rows = len(df) - prev_rows
+        logger.info(
+            f"Previous training used {prev_rows} rows. "
+            f"Current dataset has {len(df)} rows ({new_rows} new)."
+        )
+        if new_rows < MIN_NEW_ROWS:
+            logger.info(f"Only {new_rows} new rows (need {MIN_NEW_ROWS}). " "Skipping training.")
+            return
+    else:
+        logger.info("No previous training info found — first run.")
+
+    # ------------------------------------------------------------------
+    # Step 4: Detect gaps
+    # ------------------------------------------------------------------
+    logger.info("Step 4: Detect gaps")
     df = detect_gaps(df)
 
     # ------------------------------------------------------------------
-    # Step 4: Engineer targets (respecting gaps)
+    # Step 5: Engineer targets (respecting gaps)
     # ------------------------------------------------------------------
-    logger.info("Step 4: Engineer targets")
+    logger.info("Step 5: Engineer targets")
     df = engineer_targets(df)
 
     if len(df) == 0:
@@ -167,9 +258,9 @@ def train() -> None:
         return
 
     # ------------------------------------------------------------------
-    # Step 5: Prepare features and time-based split
+    # Step 6: Prepare features and time-based split
     # ------------------------------------------------------------------
-    logger.info("Step 5: Prepare features and split")
+    logger.info("Step 6: Prepare features and split")
     feature_cols = settings.feature_columns
 
     # Fill nulls with 0 (early candles may lack EMA/RSI/MACD history)
@@ -188,9 +279,9 @@ def train() -> None:
         return
 
     # ------------------------------------------------------------------
-    # Step 6: Train new XGBoost model
+    # Step 7: Train new XGBoost model
     # ------------------------------------------------------------------
-    logger.info("Step 6: Train XGBoost")
+    logger.info("Step 7: Train XGBoost")
     params = {
         "n_estimators": 100,
         "max_depth": 6,
@@ -207,9 +298,9 @@ def train() -> None:
     test_metrics = evaluate_model(new_model, X_test, y_test, "New model (test)")
 
     # ------------------------------------------------------------------
-    # Step 7: Compare with previous model (on the SAME test set)
+    # Step 8: Compare with previous model (on the SAME test set)
     # ------------------------------------------------------------------
-    logger.info("Step 7: Compare with previous model")
+    logger.info("Step 8: Compare with previous model")
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
 
     prev_model = load_previous_model()
@@ -234,9 +325,9 @@ def train() -> None:
             )
 
     # ------------------------------------------------------------------
-    # Step 8: Log to MLflow (always log run, conditionally register model)
+    # Step 9: Log to MLflow (always log run, conditionally register model)
     # ------------------------------------------------------------------
-    logger.info("Step 8: Log to MLflow")
+    logger.info("Step 9: Log to MLflow")
     mlflow.set_experiment("crypto-price-predictor")
 
     with mlflow.start_run(run_name="xgboost-price-5min") as run:
@@ -276,6 +367,18 @@ def train() -> None:
             logger.info(f"Model registered as '{settings.mlflow_model_name}'")
         else:
             logger.info("Model logged but NOT registered (did not beat previous)")
+
+    # ------------------------------------------------------------------
+    # Step 10: Save training metadata
+    # ------------------------------------------------------------------
+    save_train_info(row_count=len(df), registered=should_register)
+
+    # ------------------------------------------------------------------
+    # Step 11: Restart predictor if a new model was registered
+    # ------------------------------------------------------------------
+    if should_register:
+        logger.info("Step 11: Restarting predictor to load new model")
+        restart_predictor()
 
     # ------------------------------------------------------------------
     # Done

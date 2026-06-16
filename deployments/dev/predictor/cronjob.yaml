@@ -1,0 +1,112 @@
+# Automatic retraining CronJob for the predictor service.
+#
+# Runs daily at 00:01:
+# 1. Pulls features from RisingWave -> exports parquet to PVC
+# 2. Builds canonical dataset, trains XGBoost
+# 3. Registers new model in MLflow if it beats the previous one
+# 4. Restarts the predictor deployment so it loads the new model
+
+---
+# PVC for storing parquet files across training runs
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: predictor-data
+  labels:
+    app: predictor
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+# ServiceAccount for the CronJob (needs permission to restart predictor)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: predictor-trainer
+  labels:
+    app: predictor
+---
+# Role — allows restarting the predictor deployment
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: predictor-restarter
+  labels:
+    app: predictor
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["predictor"]
+    verbs: ["get", "patch"]
+---
+# Bind the role to the service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: predictor-restarter-binding
+  labels:
+    app: predictor
+subjects:
+  - kind: ServiceAccount
+    name: predictor-trainer
+roleRef:
+  kind: Role
+  name: predictor-restarter
+  apiGroup: rbac.authorization.k8s.io
+---
+# CronJob — daily retraining at 00:01
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: predictor-retrain
+  labels:
+    app: predictor
+spec:
+  schedule: "1 0 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app: predictor-retrain
+        spec:
+          serviceAccountName: predictor-trainer
+          restartPolicy: Never
+          containers:
+            - name: trainer
+              image: predictor:dev
+              imagePullPolicy: Never
+              command: ["python", "-m", "predictor", "train"]
+              resources:
+                requests:
+                  memory: "512Mi"
+                  cpu: "250m"
+                limits:
+                  memory: "1Gi"
+                  cpu: "1000m"
+              env:
+                - name: RISINGWAVE_HOST
+                  value: "risingwave.risingwave.svc.cluster.local"
+                - name: RISINGWAVE_PORT
+                  value: "4566"
+                - name: MLFLOW_TRACKING_URI
+                  value: "http://mlflow.mlflow.svc.cluster.local:5000"
+                - name: MLFLOW_MODEL_NAME
+                  value: "crypto-price-predictor"
+                - name: DATA_DIR
+                  value: "/app/data"
+                - name: LOG_FORMAT
+                  value: "text"
+              volumeMounts:
+                - name: data
+                  mountPath: /app/data
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: predictor-data

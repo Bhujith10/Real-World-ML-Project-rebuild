@@ -16,6 +16,16 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
+# Install kubectl (needed by CronJob to restart predictor after retraining)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    curl -fsSL "https://dl.k8s.io/release/v1.32.3/bin/linux/amd64/kubectl" \
+      -o /usr/local/bin/kubectl && \
+    chmod +x /usr/local/bin/kubectl && \
+    apt-get purge -y curl && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
 # Copy only the virtual environment and source code
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
