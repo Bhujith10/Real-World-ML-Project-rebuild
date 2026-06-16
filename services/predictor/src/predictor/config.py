@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     risingwave_db: str = "dev"
     risingwave_user: str = "root"
 
+    # Local data directory for parquet files (training)
+    data_dir: str = "data"
+
+    # Gap detection threshold (minutes). If consecutive candles are further
+    # apart than this, we consider it a gap and don't engineer targets across it.
+    gap_threshold_minutes: int = 2
+
     # Logging format: "text" for dev, "json" for production
     log_format: str = "text"
 

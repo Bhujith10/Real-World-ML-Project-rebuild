@@ -15,6 +15,7 @@ from quixstreams import Application
 
 from predictor.config import settings
 from predictor.logging import setup_logging
+from predictor.schemas import FeatureRow, Prediction
 
 
 def load_model():
@@ -65,14 +66,18 @@ def make_prediction(model, row: dict) -> dict:
 
     If no model is loaded, returns a dummy prediction with current_price
     as the predicted price (pass-through mode for testing).
+
+    Validates input via FeatureRow and output via Prediction (Pydantic).
     """
-    current_price = row.get("current_close", 0.0)
+    # Validate incoming message
+    feature_row = FeatureRow(**row)
+    current_price = feature_row.current_close
 
     if model is not None:
         # Build feature array in the exact order the model expects
         features = []
         for col in settings.feature_columns:
-            val = row.get(col)
+            val = getattr(feature_row, col)
             # Replace None/null with 0.0 — the model was trained with clean data,
             # but early candles may not have enough history for EMA/RSI/MACD
             features.append(float(val) if val is not None else 0.0)
@@ -85,13 +90,15 @@ def make_prediction(model, row: dict) -> dict:
         predicted_price = current_price
         model_version = "none"
 
-    return {
-        "pair": row.get("pair", "unknown"),
-        "window_start_ms": row.get("window_start_ms", 0),
-        "current_price": current_price,
-        "predicted_price_5min": round(predicted_price, 2),
-        "model_version": model_version,
-    }
+    # Validate outgoing message
+    prediction = Prediction(
+        pair=feature_row.pair,
+        window_start_ms=feature_row.window_start_ms,
+        current_price=current_price,
+        predicted_price_5min=round(predicted_price, 2),
+        model_version=model_version,
+    )
+    return prediction.model_dump()
 
 
 def main() -> None:

@@ -1,18 +1,21 @@
 """Training script for the crypto price predictor.
 
-This script:
-1. Loads historical feature data from RisingWave (or a Parquet file)
-2. Engineers the target: price 5 minutes ahead (shift close by 5 rows)
-3. Splits data by time (no shuffle — critical for time series!)
-4. Trains an XGBoost regressor
-5. Logs metrics, parameters, and model to MLflow
-6. Registers the model in MLflow's model registry
+Full pipeline:
+1. Pull data from RisingWave → save as timestamped Parquet in data/raw/
+2. Build canonical dataset: concat all raw Parquets → dedup → sort
+3. Detect gaps in the data (timestamp jumps > threshold)
+4. Engineer targets (price 5 min ahead), respecting gap boundaries
+5. Time-based 80/20 split (no shuffle — critical for time series)
+6. Train XGBoost regressor
+7. Compare with previous model on the SAME test set
+8. Only register the new model if it beats the previous one (lower MAE)
+9. Log everything to MLflow
 
-Run manually:  uv run python -m predictor.train
-Run in cluster: kubectl exec / Job (future)
+Run locally:
+  RISINGWAVE_HOST=localhost MLFLOW_TRACKING_URI=http://localhost:5000 \
+    uv run python -m predictor.train
 
-NOTE: You need enough accumulated data in RisingWave before training.
-      The model quality depends on having at least a few hours of candles.
+Requires RisingWave at port 4566 and MLflow at port 5000 (both via NodePort).
 """
 
 import mlflow
@@ -20,9 +23,15 @@ import numpy as np
 import polars as pl
 import xgboost as xgb
 from loguru import logger
+from mlflow.exceptions import MlflowException
 
 from predictor.config import settings
-from predictor.feature_loader import export_to_parquet, load_from_parquet, load_from_risingwave
+from predictor.feature_loader import (
+    build_canonical_dataset,
+    detect_gaps,
+    export_raw_parquet,
+    pull_from_risingwave,
+)
 from predictor.logging import setup_logging
 
 # Number of candles ahead to predict (5 candles × 1 min = 5 minutes)
@@ -31,70 +40,142 @@ PREDICTION_HORIZON = 5
 # Train/test split ratio (80% train, 20% test — by time, not random)
 TRAIN_RATIO = 0.8
 
+# Minimum rows required to attempt training
+MIN_ROWS = 50
 
-def engineer_target(df: pl.DataFrame) -> pl.DataFrame:
-    """Create the prediction target: close price N candles ahead.
 
-    For each row at time T, the target is the close price at T + PREDICTION_HORIZON.
-    Rows at the end without a future price are dropped (they have null targets).
+def engineer_targets(df: pl.DataFrame) -> pl.DataFrame:
+    """Create prediction targets respecting gap boundaries.
+
+    For each row at time T within a contiguous block, the target is the
+    close price at T + PREDICTION_HORIZON. Targets are NOT created across
+    gap boundaries — we shift within each gap_group independently.
+
+    Requires 'gap_group' column from detect_gaps().
     """
-    df = df.with_columns(
-        pl.col("current_close").shift(-PREDICTION_HORIZON).alias("target_price"),
+    result_dfs = []
+    for group_id in sorted(df["gap_group"].unique().to_list()):
+        block = df.filter(pl.col("gap_group") == group_id)
+
+        block = block.with_columns(
+            pl.col("current_close").shift(-PREDICTION_HORIZON).alias("target_price"),
+        )
+        # Drop rows without a target (last PREDICTION_HORIZON rows per block)
+        block = block.drop_nulls(subset=["target_price"])
+        result_dfs.append(block)
+
+    if not result_dfs:
+        return pl.DataFrame()
+
+    result = pl.concat(result_dfs)
+    logger.info(
+        f"After target engineering: {len(result)} rows "
+        f"(dropped {len(df) - len(result)} rows at block boundaries)"
     )
-    # Drop rows where target is null (last PREDICTION_HORIZON rows)
-    df = df.drop_nulls(subset=["target_price"])
-    return df
+    return result
 
 
-def train_model(
-    source: str = "risingwave",
-    parquet_path: str | None = None,
-    export_path: str | None = None,
-) -> None:
-    """End-to-end training pipeline.
+def evaluate_model(
+    model: xgb.XGBRegressor,
+    X: np.ndarray,
+    y: np.ndarray,
+    label: str,
+) -> dict[str, float]:
+    """Compute MAE and RMSE for a model on a dataset."""
+    y_pred = model.predict(X)
+    mae = float(np.mean(np.abs(y - y_pred)))
+    rmse = float(np.sqrt(np.mean((y - y_pred) ** 2)))
+    logger.info(f"{label} MAE:  ${mae:.2f}")
+    logger.info(f"{label} RMSE: ${rmse:.2f}")
+    return {"mae": mae, "rmse": rmse}
 
-    Args:
-        source: "risingwave" to query live data, "parquet" to read from file
-        parquet_path: Path to Parquet file (required if source="parquet")
-        export_path: If set, export the loaded features to this Parquet path
+
+def load_previous_model() -> xgb.XGBRegressor | None:
+    """Load the latest registered model from MLflow, if any.
+
+    Returns None if no model is registered.
     """
+    try:
+        client = mlflow.MlflowClient()
+        versions = client.search_model_versions(
+            f"name='{settings.mlflow_model_name}'",
+            max_results=1,
+        )
+        if not versions:
+            logger.info("No previous model in registry — this is the first training run")
+            return None
+
+        model_uri = f"models:/{settings.mlflow_model_name}/latest"
+        prev_model = mlflow.xgboost.load_model(model_uri)
+        logger.info(f"Loaded previous model from {model_uri}")
+        return prev_model
+    except MlflowException as e:
+        logger.warning(f"Could not load previous model: {e}")
+        return None
+
+
+def train() -> None:
+    """End-to-end training pipeline."""
     setup_logging()
 
     logger.info("=" * 60)
-    logger.info("Starting model training")
+    logger.info("Starting model training pipeline")
     logger.info("=" * 60)
 
-    # Step 1: Load features
-    if source == "parquet" and parquet_path:
-        df = load_from_parquet(parquet_path)
-    else:
-        df = load_from_risingwave()
+    # ------------------------------------------------------------------
+    # Step 1: Pull latest data from RisingWave → save to raw/
+    # ------------------------------------------------------------------
+    logger.info("Step 1: Pull data from RisingWave")
+    fresh_df = pull_from_risingwave()
 
-    if export_path:
-        export_to_parquet(df, export_path)
+    if len(fresh_df) == 0:
+        logger.error("No data in RisingWave. Cannot train.")
+        return
 
-    logger.info(f"Raw features shape: {df.shape}")
+    raw_path = export_raw_parquet(fresh_df)
+    logger.info(f"Raw export saved to {raw_path}")
 
-    if len(df) < PREDICTION_HORIZON + 10:
+    # ------------------------------------------------------------------
+    # Step 2: Build canonical dataset from all raw files
+    # ------------------------------------------------------------------
+    logger.info("Step 2: Build canonical dataset")
+    df = build_canonical_dataset()
+
+    if len(df) < MIN_ROWS:
         logger.error(
-            f"Not enough data to train. Need at least {PREDICTION_HORIZON + 10} rows, "
-            f"got {len(df)}. Let the system collect more candles and try again."
+            f"Not enough data to train. Need at least {MIN_ROWS} rows, "
+            f"got {len(df)}. Let the system collect more candles."
         )
         return
 
-    # Step 2: Engineer target
-    df = engineer_target(df)
-    logger.info(f"After target engineering: {df.shape}")
+    logger.info(f"Canonical dataset shape: {df.shape}")
 
-    # Step 3: Prepare feature matrix and target vector
+    # ------------------------------------------------------------------
+    # Step 3: Detect gaps
+    # ------------------------------------------------------------------
+    logger.info("Step 3: Detect gaps")
+    df = detect_gaps(df)
+
+    # ------------------------------------------------------------------
+    # Step 4: Engineer targets (respecting gaps)
+    # ------------------------------------------------------------------
+    logger.info("Step 4: Engineer targets")
+    df = engineer_targets(df)
+
+    if len(df) == 0:
+        logger.error("No usable rows after target engineering. Need more data.")
+        return
+
+    # ------------------------------------------------------------------
+    # Step 5: Prepare features and time-based split
+    # ------------------------------------------------------------------
+    logger.info("Step 5: Prepare features and split")
     feature_cols = settings.feature_columns
-    logger.info(f"Feature columns: {feature_cols}")
 
     # Fill nulls with 0 (early candles may lack EMA/RSI/MACD history)
     X = df.select(feature_cols).fill_null(0.0).to_numpy().astype(np.float32)
     y = df["target_price"].to_numpy().astype(np.float32)
 
-    # Step 4: Time-based train/test split (no shuffle!)
     split_idx = int(len(X) * TRAIN_RATIO)
     X_train, X_test = X[:split_idx], X[split_idx:]
     y_train, y_test = y[:split_idx], y[split_idx:]
@@ -102,7 +183,14 @@ def train_model(
     logger.info(f"Train set: {X_train.shape[0]} rows")
     logger.info(f"Test set:  {X_test.shape[0]} rows")
 
-    # Step 5: Train XGBoost
+    if X_test.shape[0] == 0:
+        logger.error("Test set is empty. Need more data.")
+        return
+
+    # ------------------------------------------------------------------
+    # Step 6: Train new XGBoost model
+    # ------------------------------------------------------------------
+    logger.info("Step 6: Train XGBoost")
     params = {
         "n_estimators": 100,
         "max_depth": 6,
@@ -111,26 +199,45 @@ def train_model(
     }
     logger.info(f"XGBoost params: {params}")
 
-    model = xgb.XGBRegressor(**params)
-    model.fit(X_train, y_train)
+    new_model = xgb.XGBRegressor(**params)
+    new_model.fit(X_train, y_train)
 
-    # Step 6: Evaluate
-    y_pred_train = model.predict(X_train)
-    y_pred_test = model.predict(X_test)
+    # Evaluate new model
+    train_metrics = evaluate_model(new_model, X_train, y_train, "New model (train)")
+    test_metrics = evaluate_model(new_model, X_test, y_test, "New model (test)")
 
-    mae_train = float(np.mean(np.abs(y_train - y_pred_train)))
-    mae_test = float(np.mean(np.abs(y_test - y_pred_test)))
-    rmse_train = float(np.sqrt(np.mean((y_train - y_pred_train) ** 2)))
-    rmse_test = float(np.sqrt(np.mean((y_test - y_pred_test) ** 2)))
-
-    logger.info(f"Train MAE:  ${mae_train:.2f}")
-    logger.info(f"Test MAE:   ${mae_test:.2f}")
-    logger.info(f"Train RMSE: ${rmse_train:.2f}")
-    logger.info(f"Test RMSE:  ${rmse_test:.2f}")
-
-    # Step 7: Log to MLflow
+    # ------------------------------------------------------------------
+    # Step 7: Compare with previous model (on the SAME test set)
+    # ------------------------------------------------------------------
+    logger.info("Step 7: Compare with previous model")
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-    mlflow.set_experiment("crypto-price-prediction")
+
+    prev_model = load_previous_model()
+
+    should_register = True
+    prev_test_metrics = None
+
+    if prev_model is not None:
+        prev_test_metrics = evaluate_model(prev_model, X_test, y_test, "Previous model (test)")
+        if test_metrics["mae"] >= prev_test_metrics["mae"]:
+            logger.warning(
+                f"New model MAE (${test_metrics['mae']:.2f}) is NOT better than "
+                f"previous (${prev_test_metrics['mae']:.2f}). "
+                "Skipping model registration."
+            )
+            should_register = False
+        else:
+            improvement = prev_test_metrics["mae"] - test_metrics["mae"]
+            logger.info(
+                f"New model is better! MAE improved by ${improvement:.2f} "
+                f"(${prev_test_metrics['mae']:.2f} → ${test_metrics['mae']:.2f})"
+            )
+
+    # ------------------------------------------------------------------
+    # Step 8: Log to MLflow (always log run, conditionally register model)
+    # ------------------------------------------------------------------
+    logger.info("Step 8: Log to MLflow")
+    mlflow.set_experiment("crypto-price-predictor")
 
     with mlflow.start_run(run_name="xgboost-price-5min") as run:
         # Log parameters
@@ -138,28 +245,45 @@ def train_model(
         mlflow.log_param("prediction_horizon", PREDICTION_HORIZON)
         mlflow.log_param("train_size", X_train.shape[0])
         mlflow.log_param("test_size", X_test.shape[0])
+        mlflow.log_param("total_rows", len(df))
         mlflow.log_param("feature_columns", ",".join(feature_cols))
+        mlflow.log_param("data_dir", str(settings.data_dir))
+        mlflow.log_param("gap_threshold_minutes", settings.gap_threshold_minutes)
 
-        # Log metrics
-        mlflow.log_metric("mae_train", mae_train)
-        mlflow.log_metric("mae_test", mae_test)
-        mlflow.log_metric("rmse_train", rmse_train)
-        mlflow.log_metric("rmse_test", rmse_test)
+        # Log new model metrics
+        mlflow.log_metric("mae_train", train_metrics["mae"])
+        mlflow.log_metric("mae_test", test_metrics["mae"])
+        mlflow.log_metric("rmse_train", train_metrics["rmse"])
+        mlflow.log_metric("rmse_test", test_metrics["rmse"])
 
-        # Log and register model
+        # Log previous model metrics for comparison
+        if prev_test_metrics is not None:
+            mlflow.log_metric("prev_mae_test", prev_test_metrics["mae"])
+            mlflow.log_metric("prev_rmse_test", prev_test_metrics["rmse"])
+
+        mlflow.log_metric("model_registered", 1.0 if should_register else 0.0)
+
+        # Register model only if it beats the previous one
+        registered_name = settings.mlflow_model_name if should_register else None
         mlflow.xgboost.log_model(
-            model,
+            new_model,
             artifact_path="model",
-            registered_model_name=settings.mlflow_model_name,
+            registered_model_name=registered_name,
         )
 
         logger.info(f"MLflow run ID: {run.info.run_id}")
-        logger.info(f"Model registered as '{settings.mlflow_model_name}'")
+        if should_register:
+            logger.info(f"Model registered as '{settings.mlflow_model_name}'")
+        else:
+            logger.info("Model logged but NOT registered (did not beat previous)")
 
+    # ------------------------------------------------------------------
+    # Done
+    # ------------------------------------------------------------------
     logger.info("=" * 60)
-    logger.info("Training complete!")
+    logger.info("Training pipeline complete!")
     logger.info("=" * 60)
 
 
 if __name__ == "__main__":
-    train_model()
+    train()

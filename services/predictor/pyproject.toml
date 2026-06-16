@@ -9,7 +9,7 @@ requires-python = ">=3.12"
 dependencies = [
     "quixstreams>=3.0",       # Kafka consume/produce
     "xgboost>=2.0",           # Model framework
-    "mlflow>=2.15",           # Model registry + tracking
+    "mlflow>=2.15,<3",        # Model registry + tracking (pin <3 to match server v2.21.3)
     "psycopg2-binary>=2.9",   # Connect to RisingWave for training data
     "pydantic-settings>=2.0", # Configuration via environment variables
     "loguru>=0.7",            # Structured logging

@@ -43,6 +43,18 @@ spec:
   selector:
     app: risingwave
 ---
+# PersistentVolumeClaim — stores metadata + state so views survive restarts
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: risingwave-data
+  namespace: risingwave
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
 # ConfigMap for RisingWave TOML config (compactor memory tuning)
 apiVersion: v1
 kind: ConfigMap
@@ -77,7 +89,12 @@ spec:
         - name: risingwave
           image: risingwavelabs/risingwave:v2.3.0
           imagePullPolicy: IfNotPresent
-          args: ["single_node", "--config-path", "/risingwave/config/risingwave.toml"]
+          args:
+            - single_node
+            - "--config-path"
+            - /risingwave/config/risingwave.toml
+            - "--store-directory"
+            - /risingwave-data
           env:
             - name: RW_TOTAL_MEMORY_BYTES
               value: "8589934592"
@@ -101,6 +118,8 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /risingwave/config
+            - name: data
+              mountPath: /risingwave-data
           livenessProbe:
             tcpSocket:
               port: 4566
@@ -110,3 +129,6 @@ spec:
         - name: config
           configMap:
             name: risingwave-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: risingwave-data

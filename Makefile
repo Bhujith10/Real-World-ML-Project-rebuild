@@ -3,7 +3,7 @@
 # Usage: make <target>
 # Example: make build-trades, make deploy-trades, make lint
 
-.PHONY: help lint format test build-trades build-candles build-predictor deploy-trades deploy-candles deploy-predictor cluster kafka kafka-ui risingwave risingwave-views mlflow all-infra
+.PHONY: help lint format test build-trades build-candles build-predictor deploy-trades deploy-candles deploy-predictor cluster kafka kafka-ui risingwave risingwave-views mlflow grafana all-infra
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -67,7 +67,10 @@ risingwave-views: ## Apply materialized views to RisingWave
 mlflow: ## Deploy MLflow to the cluster
 	bash deployments/dev/mlflow/install.sh
 
-all-infra: cluster kafka kafka-ui risingwave mlflow ## Create cluster + deploy all infrastructure
+grafana: ## Deploy Grafana to the cluster
+	bash deployments/dev/grafana/install.sh
+
+all-infra: cluster kafka kafka-ui risingwave risingwave-views mlflow grafana ## Create cluster + deploy all infrastructure
 
 # --- Pre-commit ---
 

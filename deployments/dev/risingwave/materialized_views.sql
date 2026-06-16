@@ -219,3 +219,33 @@ CREATE SINK IF NOT EXISTS sink_features FROM mv_features WITH (
 ) FORMAT PLAIN ENCODE JSON (
     force_append_only = 'true'
 );
+
+-- -----------------------------------------------------------------------------
+-- Step 8: Source + materialized view for predictions (consumed by Grafana)
+-- -----------------------------------------------------------------------------
+-- The predictor service writes predictions to the "predictions" Kafka topic.
+-- We ingest them here so Grafana can query via Postgres wire protocol.
+
+CREATE SOURCE IF NOT EXISTS predictions_source (
+    pair VARCHAR,
+    window_start_ms BIGINT,
+    current_price DOUBLE PRECISION,
+    predicted_price_5min DOUBLE PRECISION,
+    model_version VARCHAR
+) WITH (
+    connector = 'kafka',
+    topic = 'predictions',
+    properties.bootstrap.server = 'kafka-0.kafka-headless.kafka.svc.cluster.local:9092',
+    scan.startup.mode = 'earliest'
+) FORMAT PLAIN ENCODE JSON;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_predictions AS
+SELECT
+    pair,
+    window_start_ms,
+    current_price,
+    -- Also expose current_close as an alias for consistency with mv_features
+    current_price AS current_close,
+    predicted_price_5min,
+    model_version
+FROM predictions_source;

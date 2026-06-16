@@ -58,6 +58,9 @@ spec:
             - "--backend-store-uri"
             - "sqlite:///mlflow-data/mlflow.db"
             - "--default-artifact-root"
+            - "mlflow-artifacts:/"
+            - "--serve-artifacts"
+            - "--artifacts-destination"
             - "/mlflow-data/artifacts"
           ports:
             - containerPort: 5000

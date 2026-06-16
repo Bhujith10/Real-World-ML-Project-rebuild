@@ -1,0 +1,272 @@
+---
+# Namespace for Grafana
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: grafana
+---
+# PersistentVolumeClaim — stores Grafana config/dashboards across restarts
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: grafana
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+# ConfigMap — datasource auto-provisioning (RisingWave as Postgres)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: grafana
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: RisingWave
+        type: postgres
+        uid: risingwave
+        url: risingwave.risingwave.svc.cluster.local:4566
+        database: dev
+        user: root
+        jsonData:
+          sslmode: disable
+          postgresVersion: 1000
+          timescaledb: false
+        isDefault: true
+---
+# ConfigMap — dashboard provider (tells Grafana where to find dashboard JSON files)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: grafana
+data:
+  provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: crypto
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+# ConfigMap — the actual dashboard JSON
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: grafana
+data:
+  crypto.json: |
+    {
+      "title": "Crypto Price Predictor",
+      "uid": "crypto-mvp",
+      "schemaVersion": 38,
+      "refresh": "10s",
+      "time": { "from": "now-1h", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "BTC/USD — Actual Close vs Predicted Price (5 min ahead)",
+          "type": "timeseries",
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+          "datasource": { "type": "postgres", "uid": "risingwave" },
+          "fieldConfig": {
+            "defaults": { "unit": "currencyUSD" },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "predicted_price_5min" },
+                "properties": [
+                  { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } },
+                  { "id": "custom.lineStyle", "value": { "dash": [10, 5], "fill": "dash" } }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "current_close" },
+                "properties": [
+                  { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }
+                ]
+              }
+            ]
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+          "targets": [
+            {
+              "datasource": { "type": "postgres", "uid": "risingwave" },
+              "rawSql": "SELECT to_timestamp(window_start_ms / 1000) AS time, current_close, predicted_price_5min FROM mv_predictions WHERE pair = 'BTC/USD' AND to_timestamp(window_start_ms / 1000) >= $__timeFrom() AND to_timestamp(window_start_ms / 1000) <= $__timeTo() ORDER BY time ASC",
+              "format": "time_series",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Prediction Error (Predicted - Actual)",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 10 },
+          "datasource": { "type": "postgres", "uid": "risingwave" },
+          "fieldConfig": {
+            "defaults": { "unit": "currencyUSD" },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": { "type": "postgres", "uid": "risingwave" },
+              "rawSql": "SELECT to_timestamp(window_start_ms / 1000) AS time, (predicted_price_5min - current_close) AS prediction_error FROM mv_predictions WHERE pair = 'BTC/USD' AND to_timestamp(window_start_ms / 1000) >= $__timeFrom() AND to_timestamp(window_start_ms / 1000) <= $__timeTo() ORDER BY time ASC",
+              "format": "time_series",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "Latest Prediction",
+          "type": "stat",
+          "gridPos": { "h": 7, "w": 6, "x": 12, "y": 10 },
+          "datasource": { "type": "postgres", "uid": "risingwave" },
+          "fieldConfig": { "defaults": { "unit": "currencyUSD" } },
+          "targets": [
+            {
+              "datasource": { "type": "postgres", "uid": "risingwave" },
+              "rawSql": "SELECT predicted_price_5min FROM mv_predictions WHERE pair = 'BTC/USD' ORDER BY window_start_ms DESC LIMIT 1",
+              "format": "table",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "Latest Actual Price",
+          "type": "stat",
+          "gridPos": { "h": 7, "w": 6, "x": 18, "y": 10 },
+          "datasource": { "type": "postgres", "uid": "risingwave" },
+          "fieldConfig": { "defaults": { "unit": "currencyUSD" } },
+          "targets": [
+            {
+              "datasource": { "type": "postgres", "uid": "risingwave" },
+              "rawSql": "SELECT current_close FROM mv_predictions WHERE pair = 'BTC/USD' ORDER BY window_start_ms DESC LIMIT 1",
+              "format": "table",
+              "refId": "A"
+            }
+          ]
+        }
+      ]
+    }
+---
+# Service — ClusterIP for internal access
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: grafana
+  labels:
+    app: grafana
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+  selector:
+    app: grafana
+---
+# NodePort service — exposes Grafana to localhost:3000 via kind port mapping
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-nodeport
+  namespace: grafana
+  labels:
+    app: grafana
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30300
+  selector:
+    app: grafana
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: grafana
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:10.4.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: "admin"
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: "admin"
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: "Viewer"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: grafana-data
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
